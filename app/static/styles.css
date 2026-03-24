@@ -115,3 +115,20 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+
+.lead-sheet-box {
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 16px;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow: auto;
+}
+
+.lead-sheet-toolbar {
+  margin-bottom: 10px;
+}

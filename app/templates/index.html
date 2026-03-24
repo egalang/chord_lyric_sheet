@@ -56,6 +56,14 @@
       <div id="chords" class="segments"></div>
     </section>
 
+    <section id="leadSheetPanel" class="panel hidden">
+      <h2>Lead Sheet</h2>
+      <div class="lead-sheet-toolbar">
+        <button id="copyLeadSheetBtn" type="button">Copy lead sheet</button>
+      </div>
+      <pre id="leadSheetBox" class="lead-sheet-box">Waiting for results.</pre>
+    </section>
+
     <section id="debugPanel" class="panel hidden">
       <h2>Debug</h2>
       <p><a id="debugLink" href="#" target="_blank" rel="noopener">Open debug log</a></p>
@@ -71,6 +79,7 @@
     const transcriptPanel = document.getElementById('transcriptPanel');
     const chordPanel = document.getElementById('chordPanel');
     const debugPanel = document.getElementById('debugPanel');
+    const leadSheetPanel = document.getElementById('leadSheetPanel');
     const vocalsPlayer = document.getElementById('vocalsPlayer');
     const instrumentalPlayer = document.getElementById('instrumentalPlayer');
     const vocalsLink = document.getElementById('vocalsLink');
@@ -85,6 +94,8 @@
     const chordJsonLink = document.getElementById('chordJsonLink');
     const debugLink = document.getElementById('debugLink');
     const beatGridLink = document.getElementById('beatGridLink');
+    const leadSheetBox = document.getElementById('leadSheetBox');
+    const copyLeadSheetBtn = document.getElementById('copyLeadSheetBtn');
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -98,6 +109,31 @@
 
     function secondsLabel(value) {
       return `${Number(value).toFixed(2)}s`;
+    }
+
+
+    function renderLeadSheet(data) {
+      const leadSheet = data.lead_sheet || {};
+      const text = (leadSheet.text || '').trim();
+      leadSheetBox.textContent = text || 'No lead sheet available.';
+    }
+
+    function setupLeadSheetCopy() {
+      if (!copyLeadSheetBtn || !leadSheetBox) return;
+      copyLeadSheetBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(leadSheetBox.textContent || '');
+          copyLeadSheetBtn.textContent = 'Copied!';
+          setTimeout(() => {
+            copyLeadSheetBtn.textContent = 'Copy lead sheet';
+          }, 1200);
+        } catch (error) {
+          copyLeadSheetBtn.textContent = 'Copy failed';
+          setTimeout(() => {
+            copyLeadSheetBtn.textContent = 'Copy lead sheet';
+          }, 1200);
+        }
+      });
     }
 
     function renderSegments(container, items, formatter) {
@@ -126,11 +162,13 @@
       transcriptPanel.classList.add('hidden');
       chordPanel.classList.add('hidden');
       debugPanel.classList.add('hidden');
+      leadSheetPanel.classList.add('hidden');
       segmentsEl.innerHTML = '';
       chordsEl.innerHTML = '';
       lyricsEl.value = '';
       metaEl.textContent = '';
       chordMetaEl.textContent = '';
+      leadSheetBox.textContent = 'Processing...';
       setChordStatus('Waiting for results.');
       submitBtn.disabled = true;
       setStatus('Processing upload. First run may take longer while models download.');
@@ -183,17 +221,23 @@
           setChordStatus(`Stage 5 failed: ${chords.error || 'Unknown chord inference error'}`, true);
         }
 
+        renderLeadSheet(data);
+
         resultsEl.classList.remove('hidden');
         transcriptPanel.classList.remove('hidden');
         chordPanel.classList.remove('hidden');
+        leadSheetPanel.classList.remove('hidden');
         debugPanel.classList.remove('hidden');
         setStatus('Processing complete. Review the stems, transcript, beat grid, and adaptive chord timeline below.');
       } catch (error) {
+        leadSheetBox.textContent = 'Lead sheet unavailable.';
         setStatus(`Processing failed. ${error.message}`, true);
       } finally {
         submitBtn.disabled = false;
       }
     });
+
+    setupLeadSheetCopy();
   </script>
 </body>
 </html>

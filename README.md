@@ -1,4 +1,4 @@
-# Demucs + Whisper + Adaptive Chord Segmentation
+# Demucs + Whisper + Adaptive Chord Segmentation + Lead Sheet MVP
 
 This Docker Compose package keeps the working Stage 1 and Stage 2 flow intact and adds a Stage 5 chord pass:
 
@@ -22,6 +22,7 @@ For each upload the app returns:
 - `beat_grid.json`
 - `chord_timeline.json`
 - `debug.txt`
+- lead sheet text view that combines chords and lyrics
 
 ## Stage 5 behavior
 
@@ -46,3 +47,8 @@ Open: `http://localhost:8000`
 
 - Stage 1 and Stage 2 remain isolated so they can still succeed even if Stage 5 chord inference fails.
 - `madmom` is installed from the CPJKU GitHub repository in this package so it is more compatible with modern Python versions than the very old PyPI release.
+
+
+## Lead sheet MVP
+
+This update adds a browser-side lead sheet panel that displays chord-over-lyric text using the Stage 5 chord timeline plus Whisper lyric segments. It is intended as a quick MVP display, not engraved staff notation yet.

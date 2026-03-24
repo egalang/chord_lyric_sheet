@@ -140,6 +140,11 @@ async def process_audio(file: UploadFile = File(...)):
                 "meta": {},
             }
 
+        lead_sheet = build_lead_sheet(
+            lyric_segments=transcription["segments"],
+            chord_timeline=chord_result.get("timeline", []),
+        )
+
         payload = {
             "success": True,
             "job_id": job_id,
@@ -149,6 +154,7 @@ async def process_audio(file: UploadFile = File(...)):
             "lyrics": transcription["text"],
             "segments": transcription["segments"],
             "chords": chord_result,
+            "lead_sheet": lead_sheet,
             "meta": {
                 "whisper_model": transcription["model_name"],
                 "language": transcription.get("language"),
@@ -295,6 +301,137 @@ def transcribe_vocals(vocals_path: Path, debug_lines: list[str]) -> dict[str, An
         "language": result.get("language"),
         "model_name": "base",
     }
+
+
+def build_lead_sheet(
+    lyric_segments: list[dict[str, Any]],
+    chord_timeline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not lyric_segments:
+        return {"text": "", "blocks": []}
+
+    usable_chords = [
+        item for item in (chord_timeline or [])
+        if float(item.get("end", 0.0)) > float(item.get("start", 0.0))
+    ]
+
+    blocks: list[dict[str, Any]] = []
+
+    for seg in lyric_segments:
+        seg_start = float(seg.get("start", 0.0))
+        seg_end = float(seg.get("end", seg_start))
+        seg_text = " ".join((seg.get("text") or "").split()).strip()
+
+        if not seg_text:
+            continue
+
+        overlapping = []
+        for chord in usable_chords:
+            chord_start = float(chord.get("start", 0.0))
+            chord_end = float(chord.get("end", chord_start))
+            if chord_end <= seg_start or chord_start >= seg_end:
+                continue
+
+            overlap_start = max(seg_start, chord_start)
+            overlap_end = min(seg_end, chord_end)
+            if overlap_end > overlap_start:
+                overlapping.append({
+                    "start": overlap_start,
+                    "end": overlap_end,
+                    "label": (chord.get("label") or "N.C.").strip() or "N.C.",
+                })
+
+        if not overlapping:
+            overlapping = [{
+                "start": seg_start,
+                "end": seg_end,
+                "label": "N.C.",
+            }]
+
+        merged: list[dict[str, Any]] = []
+        for item in overlapping:
+            if merged and merged[-1]["label"] == item["label"]:
+                merged[-1]["end"] = item["end"]
+            else:
+                merged.append(dict(item))
+
+        words = seg_text.split()
+        if not words:
+            continue
+
+        total_words = len(words)
+        total_duration = max(0.001, seg_end - seg_start)
+
+        counts: list[int] = []
+        running = 0
+        for idx, item in enumerate(merged):
+            duration = max(0.001, float(item["end"]) - float(item["start"]))
+            if idx == len(merged) - 1:
+                count = total_words - running
+            else:
+                ratio = duration / total_duration
+                count = max(1, int(round(total_words * ratio)))
+                remaining_spans = len(merged) - idx - 1
+                max_allowed = total_words - running - remaining_spans
+                count = min(count, max_allowed)
+            counts.append(count)
+            running += count
+
+        diff = total_words - sum(counts)
+        if counts:
+            counts[-1] += diff
+
+        pairs: list[dict[str, str]] = []
+        cursor = 0
+        for item, count in zip(merged, counts):
+            chunk_words = words[cursor:cursor + max(0, count)]
+            cursor += max(0, count)
+            chunk_text = " ".join(chunk_words).strip()
+            if not chunk_text:
+                continue
+            pairs.append({
+                "chord": item["label"],
+                "lyrics": chunk_text,
+            })
+
+        if not pairs:
+            pairs = [{"chord": merged[0]["label"], "lyrics": seg_text}]
+
+        chord_line, lyric_line = render_chord_lyric_lines(pairs)
+
+        blocks.append({
+            "start": round(seg_start, 2),
+            "end": round(seg_end, 2),
+            "chord_line": chord_line,
+            "lyric_line": lyric_line,
+            "pairs": pairs,
+        })
+
+    lead_sheet_text = "\n\n".join(
+        f"{block['chord_line']}\n{block['lyric_line']}" for block in blocks
+    )
+
+    return {
+        "text": lead_sheet_text,
+        "blocks": blocks,
+    }
+
+
+def render_chord_lyric_lines(pairs: list[dict[str, str]]) -> tuple[str, str]:
+    chord_parts: list[str] = []
+    lyric_parts: list[str] = []
+
+    for pair in pairs:
+        chord = (pair.get("chord") or "N.C.").strip() or "N.C."
+        lyric = (pair.get("lyrics") or "").strip()
+
+        width = max(len(chord), len(lyric), 2)
+        chord_parts.append(chord.ljust(width))
+        lyric_parts.append(lyric.ljust(width))
+
+    chord_line = "  ".join(chord_parts).rstrip()
+    lyric_line = "  ".join(lyric_parts).rstrip()
+    return chord_line, lyric_line
 
 
 def infer_chords_from_instrumental(

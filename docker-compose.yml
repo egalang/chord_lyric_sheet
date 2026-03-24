@@ -1,7 +1,7 @@
 services:
   demucs_whisper_app:
     build: .
-    container_name: demucs_whisper_stage2
+    container_name: demucs_whisper_stage5_mvp
     ports:
       - "8000:8000"
     volumes:
