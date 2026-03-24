@@ -1,0 +1,12 @@
+services:
+  demucs_whisper_app:
+    build: .
+    container_name: demucs_whisper_stage2
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_DATA_DIR=/app/data
+      - MAX_UPLOAD_MB=200
