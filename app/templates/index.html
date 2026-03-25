@@ -3,71 +3,190 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Demucs + Whisper + Adaptive Chord Segmentation MIDI-Assisted Chord Inference</title>
+  <title>Chord + Lyrics Sheet Creator</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <main class="container">
-    <h1>Demucs + Whisper + Adaptive Chord Segmentation MIDI-Assisted Chord Inference</h1>
-    <p class="lead">Upload one audio file, validate vocal/instrumental stems, review the Whisper transcript, and inspect a a Stage 5 chord timeline generated from the instrumental stem via Basic Pitch + madmom beat/downbeat tracking + adaptive intra-bar segmentation + music21 chord inference.</p>
-
-    <section class="panel">
-      <form id="uploadForm">
-        <label for="audioFile">Audio file</label>
-        <input id="audioFile" name="file" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.mp4" required />
-        <button id="submitBtn" type="submit">Process audio</button>
-      </form>
-      <div id="status" class="status">Ready.</div>
-    </section>
-
-    <section id="results" class="panel hidden">
-      <h2>Stem Validation</h2>
-      <div class="audio-grid">
-        <div>
-          <h3>Vocals</h3>
-          <audio id="vocalsPlayer" controls></audio>
-          <p><a id="vocalsLink" href="#" target="_blank" rel="noopener">Open vocals.wav</a></p>
+    <div class="app-shell">
+      <section class="hero">
+        <div class="hero-grid">
+          <div>
+            <div class="hero-badges">
+              <span class="badge">Stage 5 pipeline</span>
+              <span class="badge">Lyrics + chords MVP</span>
+              <span class="badge">Local Docker app</span>
+            </div>
+            <h1>Chord + Lyrics Sheet Creator</h1>
+            <p>Upload a song and generate a musician-friendly lead sheet from your existing pipeline: Demucs stem separation, Whisper lyric timestamps, Basic Pitch MIDI extraction, madmom beat/downbeat tracking, and adaptive intra-bar chord segmentation.</p>
+            <div class="quick-links">
+              <a href="#uploadPanel">Upload</a>
+              <a href="#summaryPanel">Summary</a>
+              <a href="#leadSheetPanel">Lead sheet</a>
+              <a href="#chordPanel">Chord timeline</a>
+            </div>
+          </div>
+          <aside class="hero-side">
+            <h3>Current workflow</h3>
+            <ul>
+              <li>Validate separated vocals and instrumental audio.</li>
+              <li>Review transcript and timestamped lyric segments.</li>
+              <li>Inspect adaptive chord timeline with beat-aware segmentation.</li>
+              <li>Read and copy a formatted lead sheet at the bottom.</li>
+            </ul>
+          </aside>
         </div>
-        <div>
-          <h3>Instrumental</h3>
-          <audio id="instrumentalPlayer" controls></audio>
-          <p><a id="instrumentalLink" href="#" target="_blank" rel="noopener">Open instrumental.wav</a></p>
+      </section>
+
+      <section id="uploadPanel" class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Upload and process</h2>
+            <p>Choose one audio file and run the complete lead sheet pipeline.</p>
+          </div>
         </div>
+        <div class="upload-grid">
+          <div>
+            <form id="uploadForm">
+              <label for="audioFile">Audio file</label>
+              <input id="audioFile" name="file" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.mp4" required />
+              <div class="toolbar-row">
+                <button id="submitBtn" type="submit">Process audio</button>
+              </div>
+            </form>
+            <div id="status" class="status">Ready.</div>
+          </div>
+          <div class="helper-card">
+            <h3>Best results</h3>
+            <ol>
+              <li>Use a clean song file with stable tempo and clear harmony.</li>
+              <li>Wait for stems, transcript, chord timeline, and lead sheet to finish loading.</li>
+              <li>Use the jump buttons to quickly audition tricky lyric or chord regions.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section id="summaryPanel" class="panel hidden">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Processing summary</h2>
+            <p>Quick overview of the generated output.</p>
+          </div>
+        </div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-label">Language</div>
+            <div id="summaryLanguage" class="summary-value">—</div>
+            <div class="summary-subvalue">Whisper detected language</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Lyric segments</div>
+            <div id="summarySegments" class="summary-value">0</div>
+            <div class="summary-subvalue">Timestamped transcript blocks</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Chord segments</div>
+            <div id="summaryChords" class="summary-value">0</div>
+            <div class="summary-subvalue">Adaptive timeline entries</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Tempo</div>
+            <div id="summaryTempo" class="summary-value">—</div>
+            <div class="summary-subvalue">Detected BPM</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="results" class="panel hidden">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Stem validation</h2>
+            <p>Listen to the generated stems before reviewing lyrics and chords.</p>
+          </div>
+        </div>
+        <div class="audio-grid">
+          <div class="audio-card">
+            <h3>Vocals</h3>
+            <audio id="vocalsPlayer" controls></audio>
+            <p><a id="vocalsLink" href="#" target="_blank" rel="noopener">Open vocals.wav</a></p>
+          </div>
+          <div class="audio-card">
+            <h3>Instrumental</h3>
+            <audio id="instrumentalPlayer" controls></audio>
+            <p><a id="instrumentalLink" href="#" target="_blank" rel="noopener">Open instrumental.wav</a></p>
+          </div>
+        </div>
+      </section>
+
+      <div class="results-grid">
+        <section id="transcriptPanel" class="panel hidden">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Transcript</h2>
+              <p>Full Whisper transcript and timestamped lyric segments.</p>
+            </div>
+          </div>
+          <div class="meta" id="meta"></div>
+          <textarea id="lyrics" readonly></textarea>
+          <h3>Timestamped segments</h3>
+          <div id="segments" class="list-shell"></div>
+        </section>
+
+        <section id="chordPanel" class="panel hidden">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Chord timeline</h2>
+              <p>Adaptive Stage 5 chord detection aligned to musical structure.</p>
+            </div>
+          </div>
+          <div class="meta" id="chordMeta"></div>
+          <div class="download-links">
+            <a id="midiLink" href="#" target="_blank" rel="noopener">Open instrumental_basic_pitch.mid</a>
+            <a id="chordJsonLink" href="#" target="_blank" rel="noopener">Open chord_timeline.json</a>
+            <a id="beatGridLink" href="#" target="_blank" rel="noopener">Open beat_grid.json</a>
+          </div>
+          <div id="chordStatus" class="status compact">Waiting for results.</div>
+          <div id="chords" class="list-shell"></div>
+        </section>
       </div>
-    </section>
 
-    <section id="transcriptPanel" class="panel hidden">
-      <h2>Transcript</h2>
-      <div class="meta" id="meta"></div>
-      <textarea id="lyrics" readonly></textarea>
-      <h3>Timestamped segments</h3>
-      <div id="segments" class="segments"></div>
-    </section>
+      <section id="leadSheetPanel" class="panel hidden">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Lead sheet</h2>
+            <p>Read the plain-text version or use the structured line cards for quicker review.</p>
+          </div>
+          <div class="lead-sheet-toolbar">
+            <button id="copyLeadSheetBtn" type="button">Copy lead sheet</button>
+            <button id="copyChordProBtn" type="button" class="button-secondary">Copy ChordPro</button>
+            <button id="downloadChordProBtn" type="button" class="button-secondary">Download .pro</button>
+          </div>
+        </div>
+        <div class="lead-sheet-layout">
+          <div>
+            <h3>Plain text view</h3>
+            <pre id="leadSheetBox" class="lead-sheet-box">Waiting for results.</pre>
+          </div>
+          <div>
+            <h3>Structured lines</h3>
+            <div id="leadSheetBlocks" class="lead-sheet-blocks"></div>
+          </div>
+        </div>
+      </section>
 
-    <section id="chordPanel" class="panel hidden">
-      <h2>Stage 5 Chord Timeline</h2>
-      <div class="meta" id="chordMeta"></div>
-      <div class="download-links">
-        <a id="midiLink" href="#" target="_blank" rel="noopener">Open instrumental_basic_pitch.mid</a>
-        <a id="chordJsonLink" href="#" target="_blank" rel="noopener">Open chord_timeline.json</a>
-        <a id="beatGridLink" href="#" target="_blank" rel="noopener">Open beat_grid.json</a>
-      </div>
-      <div id="chordStatus" class="status compact">Waiting for results.</div>
-      <div id="chords" class="segments"></div>
-    </section>
+      <section id="debugPanel" class="panel hidden">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Debug</h2>
+            <p>Open the job debug log for troubleshooting.</p>
+          </div>
+        </div>
+        <p><a id="debugLink" href="#" target="_blank" rel="noopener">Open debug log</a></p>
+      </section>
 
-    <section id="leadSheetPanel" class="panel hidden">
-      <h2>Lead Sheet</h2>
-      <div class="lead-sheet-toolbar">
-        <button id="copyLeadSheetBtn" type="button">Copy lead sheet</button>
-      </div>
-      <pre id="leadSheetBox" class="lead-sheet-box">Waiting for results.</pre>
-    </section>
-
-    <section id="debugPanel" class="panel hidden">
-      <h2>Debug</h2>
-      <p><a id="debugLink" href="#" target="_blank" rel="noopener">Open debug log</a></p>
-    </section>
+      <div class="footer-note">UI refresh: cleaner layout, summary cards, jump-to-audio controls, and a more readable lead sheet view.</div>
+    </div>
   </main>
 
   <script>
@@ -76,6 +195,7 @@
     const submitBtn = document.getElementById('submitBtn');
     const statusEl = document.getElementById('status');
     const resultsEl = document.getElementById('results');
+    const summaryPanel = document.getElementById('summaryPanel');
     const transcriptPanel = document.getElementById('transcriptPanel');
     const chordPanel = document.getElementById('chordPanel');
     const debugPanel = document.getElementById('debugPanel');
@@ -95,51 +215,112 @@
     const debugLink = document.getElementById('debugLink');
     const beatGridLink = document.getElementById('beatGridLink');
     const leadSheetBox = document.getElementById('leadSheetBox');
+    const leadSheetBlocks = document.getElementById('leadSheetBlocks');
     const copyLeadSheetBtn = document.getElementById('copyLeadSheetBtn');
+    const copyChordProBtn = document.getElementById('copyChordProBtn');
+    const downloadChordProBtn = document.getElementById('downloadChordProBtn');
+    const summaryLanguage = document.getElementById('summaryLanguage');
+    const summarySegments = document.getElementById('summarySegments');
+    const summaryChords = document.getElementById('summaryChords');
+    const summaryTempo = document.getElementById('summaryTempo');
+    vocalsPlayer.preload = 'metadata';
+    instrumentalPlayer.preload = 'metadata';
+    let currentLeadSheetData = { text: '', blocks: [], chordpro: '' };
 
-    function setStatus(message, isError = false) {
+    function setStatus(message, state = 'info') {
       statusEl.textContent = message;
-      statusEl.className = isError ? 'status error' : 'status';
+      statusEl.className = `status${state === 'error' ? ' error' : state === 'ok' ? ' ok' : ''}`;
     }
 
     function setChordStatus(message, isError = false) {
       chordStatusEl.textContent = message;
-      chordStatusEl.className = isError ? 'status compact error' : 'status compact';
+      chordStatusEl.className = isError ? 'status compact error' : 'status compact ok';
     }
 
     function secondsLabel(value) {
       return `${Number(value).toFixed(2)}s`;
     }
 
-
-    function renderLeadSheet(data) {
-      const leadSheet = data.lead_sheet || {};
-      const text = (leadSheet.text || '').trim();
-      leadSheetBox.textContent = text || 'No lead sheet available.';
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
-    function setupLeadSheetCopy() {
-      if (!copyLeadSheetBtn || !leadSheetBox) return;
-      copyLeadSheetBtn.addEventListener('click', async () => {
+    function seekAudio(player, seconds) {
+      if (!player || !Number.isFinite(Number(seconds))) return;
+      if (!player.src) return;
+
+      const targetTime = Math.max(0, Number(seconds));
+
+      const clampTime = () => {
+        const duration = Number.isFinite(player.duration) ? player.duration : null;
+        return duration && duration > 0 ? Math.min(targetTime, Math.max(0, duration - 0.05)) : targetTime;
+      };
+
+      const playFromTarget = () => {
+        const safeTime = clampTime();
+        const startPlayback = () => {
+          const playPromise = player.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {});
+          }
+        };
+
+        const finishSeek = () => {
+          player.removeEventListener('seeked', finishSeek);
+          startPlayback();
+        };
+
         try {
-          await navigator.clipboard.writeText(leadSheetBox.textContent || '');
-          copyLeadSheetBtn.textContent = 'Copied!';
-          setTimeout(() => {
-            copyLeadSheetBtn.textContent = 'Copy lead sheet';
-          }, 1200);
-        } catch (error) {
-          copyLeadSheetBtn.textContent = 'Copy failed';
-          setTimeout(() => {
-            copyLeadSheetBtn.textContent = 'Copy lead sheet';
-          }, 1200);
+          player.pause();
+          player.addEventListener('seeked', finishSeek, { once: true });
+          player.currentTime = safeTime;
+          window.setTimeout(() => {
+            player.removeEventListener('seeked', finishSeek);
+            startPlayback();
+          }, 250);
+        } catch (_error) {
+          startPlayback();
         }
+      };
+
+      if (player.readyState >= 1) {
+        playFromTarget();
+        return;
+      }
+
+      const onLoadedMetadata = () => {
+        player.removeEventListener('loadedmetadata', onLoadedMetadata);
+        playFromTarget();
+      };
+
+      player.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+      player.load();
+    }
+
+    function buildJumpButton(target, seconds) {
+      return `<button type="button" class="jump-btn button-secondary" data-target="${target}" data-seek="${Number(seconds).toFixed(3)}">Jump</button>`;
+    }
+
+    function attachJumpHandlers(scope = document) {
+      scope.querySelectorAll('[data-seek]').forEach(button => {
+        button.addEventListener('click', () => {
+          const seconds = Number(button.getAttribute('data-seek'));
+          const target = button.getAttribute('data-target');
+          const player = target === 'vocals' ? vocalsPlayer : instrumentalPlayer;
+          seekAudio(player, seconds);
+        });
       });
     }
 
     function renderSegments(container, items, formatter) {
       container.innerHTML = '';
       if (!Array.isArray(items) || items.length === 0) {
-        container.innerHTML = '<div class="segment">No entries returned.</div>';
+        container.innerHTML = '<div class="segment"><div class="text">No entries returned.</div></div>';
         return;
       }
       items.forEach(item => {
@@ -148,28 +329,95 @@
         row.innerHTML = formatter(item);
         container.appendChild(row);
       });
+      attachJumpHandlers(container);
     }
 
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const file = fileInput.files[0];
-      if (!file) {
-        setStatus('Please choose an audio file first.', true);
+    function renderLeadSheet(data) {
+      const leadSheet = data.lead_sheet || {};
+      currentLeadSheetData = leadSheet;
+      const text = (leadSheet.text || '').trim();
+      leadSheetBox.textContent = text || 'No lead sheet available.';
+
+      leadSheetBlocks.innerHTML = '';
+      const blocks = Array.isArray(leadSheet.blocks) ? leadSheet.blocks : [];
+      if (!blocks.length) {
+        leadSheetBlocks.innerHTML = '<div class="lead-sheet-card"><div class="text">No structured lead sheet blocks available.</div></div>';
         return;
       }
 
+      blocks.forEach((block, index) => {
+        const card = document.createElement('div');
+        card.className = 'lead-sheet-card';
+        const pairs = Array.isArray(block.pairs) ? block.pairs : [];
+        const pairChips = pairs.map(pair => `<span class="pair-chip"><strong>${escapeHtml(pair.chord || 'N.C.')}</strong><span>${escapeHtml(pair.lyrics || '')}</span></span>`).join('');
+        card.innerHTML = `
+          <div class="lead-sheet-card-header">
+            <div>
+              <h4>Line ${index + 1}</h4>
+              <div class="small">${secondsLabel(block.start || 0)} - ${secondsLabel(block.end || 0)}</div>
+            </div>
+            ${buildJumpButton('vocals', block.start || 0)}
+          </div>
+          <div class="lead-lines">
+            <div class="chord-line">${escapeHtml(block.chord_line || '')}</div>
+            <div class="lyric-line">${escapeHtml(block.lyric_line || '')}</div>
+          </div>
+          <div class="pairs-row">${pairChips || '<span class="small">No chord-word pairs available.</span>'}</div>
+        `;
+        leadSheetBlocks.appendChild(card);
+      });
+      attachJumpHandlers(leadSheetBlocks);
+    }
+
+    function buildChordLyricInlineText(leadSheet) {
+      if (leadSheet && typeof leadSheet.chordpro === 'string' && leadSheet.chordpro.trim()) {
+        return leadSheet.chordpro;
+      }
+      const blocks = Array.isArray(leadSheet?.blocks) ? leadSheet.blocks : [];
+      if (!blocks.length) return leadSheet?.text || '';
+      return blocks.map(block => {
+        const pairs = Array.isArray(block.pairs) ? block.pairs : [];
+        return pairs.map(pair => `[${pair.chord || 'N.C.'}]${pair.lyrics || ''}`).join('');
+      }).join('\n');
+    }
+
+    function updateSummary(data) {
+      const meta = data.meta || {};
+      const chords = data.chords || {};
+      const chordMeta = chords.meta || {};
+      summaryLanguage.textContent = meta.language || 'unknown';
+      summarySegments.textContent = String((data.segments || []).length);
+      summaryChords.textContent = String((chords.timeline || []).length);
+      summaryTempo.textContent = chordMeta.tempo_bpm ? String(chordMeta.tempo_bpm) : '—';
+    }
+
+    function resetUiForProcessing() {
       resultsEl.classList.add('hidden');
+      summaryPanel.classList.add('hidden');
       transcriptPanel.classList.add('hidden');
       chordPanel.classList.add('hidden');
       debugPanel.classList.add('hidden');
       leadSheetPanel.classList.add('hidden');
       segmentsEl.innerHTML = '';
       chordsEl.innerHTML = '';
+      leadSheetBlocks.innerHTML = '';
+      currentLeadSheetData = { text: '', blocks: [], chordpro: '' };
       lyricsEl.value = '';
       metaEl.textContent = '';
       chordMetaEl.textContent = '';
       leadSheetBox.textContent = 'Processing...';
       setChordStatus('Waiting for results.');
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) {
+        setStatus('Please choose an audio file first.', 'error');
+        return;
+      }
+
+      resetUiForProcessing();
       submitBtn.disabled = true;
       setStatus('Processing upload. First run may take longer while models download.');
 
@@ -187,8 +435,12 @@
           throw new Error(detail);
         }
 
+        vocalsPlayer.pause();
+        instrumentalPlayer.pause();
         vocalsPlayer.src = data.vocals_url;
         instrumentalPlayer.src = data.instrumental_url;
+        vocalsPlayer.load();
+        instrumentalPlayer.load();
         vocalsLink.href = data.vocals_url;
         instrumentalLink.href = data.instrumental_url;
         debugLink.href = data.debug_url;
@@ -198,7 +450,14 @@
         metaEl.textContent = `Whisper model: ${meta.whisper_model || 'unknown'} | Language: ${meta.language || 'unknown'} | Segments: ${meta.segment_count || 0}`;
 
         renderSegments(segmentsEl, data.segments, (seg) => {
-          return `<span class="time">${secondsLabel(seg.start)} - ${secondsLabel(seg.end)}</span><span class="text">${seg.text || ''}</span>`;
+          return `
+            <div class="time-pill">${secondsLabel(seg.start)} - ${secondsLabel(seg.end)}</div>
+            <div class="text">
+              <div class="entry-title">Lyric segment</div>
+              <div>${escapeHtml(seg.text || '')}</div>
+            </div>
+            ${buildJumpButton('vocals', seg.start || 0)}
+          `;
         });
 
         const chords = data.chords || {};
@@ -209,35 +468,80 @@
           chordJsonLink.href = chords.chord_json_url || '#';
           beatGridLink.href = chords.beat_grid_url || '#';
           renderSegments(chordsEl, chords.timeline, (item) => {
-            return `<span class="time">${secondsLabel(item.start)} - ${secondsLabel(item.end)}</span><span class="text"><strong>${item.label || 'N.C.'}</strong><br>${item.name || ''}<br><small>Segment: ${item.segment_kind || 'window'} ${item.segment_index || ''} | Sub: ${item.subsegment_index || 1} | Split: ${item.split_level || 'full'} (${item.split_reason || 'base'})</small></span>`;
+            return `
+              <div class="time-pill">${secondsLabel(item.start)} - ${secondsLabel(item.end)}</div>
+              <div class="text">
+                <div class="entry-title">${escapeHtml(item.label || 'N.C.')}</div>
+                <div>${escapeHtml(item.name || '')}</div>
+                <div class="entry-meta">Segment: ${escapeHtml(item.segment_kind || 'window')} ${escapeHtml(item.segment_index || '')} | Sub: ${escapeHtml(item.subsegment_index || 1)} | Split: ${escapeHtml(item.split_level || 'full')} (${escapeHtml(item.split_reason || 'base')})</div>
+              </div>
+              ${buildJumpButton('instrumental', item.start || 0)}
+            `;
           });
           setChordStatus('Stage 5 chord inference completed. Review the adaptive chord timeline below.');
         } else {
           midiLink.href = '#';
           chordJsonLink.href = '#';
-          chordMetaEl.textContent = 'Stage 1 and Stage 2 completed, but Stage 5 chord inference did not finish.';
-          chordsEl.innerHTML = '<div class="segment">No chord timeline generated.</div>';
           beatGridLink.href = '#';
+          chordMetaEl.textContent = 'Stage 1 and Stage 2 completed, but Stage 5 chord inference did not finish.';
+          chordsEl.innerHTML = '<div class="segment"><div class="text">No chord timeline generated.</div></div>';
           setChordStatus(`Stage 5 failed: ${chords.error || 'Unknown chord inference error'}`, true);
         }
 
+        updateSummary(data);
         renderLeadSheet(data);
 
         resultsEl.classList.remove('hidden');
+        summaryPanel.classList.remove('hidden');
         transcriptPanel.classList.remove('hidden');
         chordPanel.classList.remove('hidden');
         leadSheetPanel.classList.remove('hidden');
         debugPanel.classList.remove('hidden');
-        setStatus('Processing complete. Review the stems, transcript, beat grid, and adaptive chord timeline below.');
+        setStatus('Processing complete. Review the stems, transcript, chord timeline, and lead sheet below.', 'ok');
       } catch (error) {
         leadSheetBox.textContent = 'Lead sheet unavailable.';
-        setStatus(`Processing failed. ${error.message}`, true);
+        leadSheetBlocks.innerHTML = '<div class="lead-sheet-card"><div class="text">Lead sheet unavailable.</div></div>';
+        setStatus(`Processing failed. ${error.message}`, 'error');
       } finally {
         submitBtn.disabled = false;
       }
     });
 
-    setupLeadSheetCopy();
+    copyLeadSheetBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(leadSheetBox.textContent || '');
+        copyLeadSheetBtn.textContent = 'Copied!';
+        setTimeout(() => { copyLeadSheetBtn.textContent = 'Copy lead sheet'; }, 1200);
+      } catch (error) {
+        copyLeadSheetBtn.textContent = 'Copy failed';
+        setTimeout(() => { copyLeadSheetBtn.textContent = 'Copy lead sheet'; }, 1200);
+      }
+    });
+
+    copyChordProBtn.addEventListener('click', async () => {
+      try {
+        const generated = buildChordLyricInlineText(currentLeadSheetData) || (leadSheetBox.textContent || '');
+        await navigator.clipboard.writeText(generated);
+        copyChordProBtn.textContent = 'Copied!';
+        setTimeout(() => { copyChordProBtn.textContent = 'Copy ChordPro'; }, 1200);
+      } catch (error) {
+        copyChordProBtn.textContent = 'Copy failed';
+        setTimeout(() => { copyChordProBtn.textContent = 'Copy ChordPro'; }, 1200);
+      }
+    });
+
+    downloadChordProBtn.addEventListener('click', () => {
+      const generated = buildChordLyricInlineText(currentLeadSheetData) || '';
+      const blob = new Blob([generated], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'lead_sheet.pro';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    });
   </script>
 </body>
 </html>

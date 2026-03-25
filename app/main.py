@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import statistics
 import subprocess
 import traceback
@@ -16,7 +17,7 @@ import whisper
 from demucs.apply import apply_model
 from demucs.pretrained import get_model
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -38,7 +39,6 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Demucs + Whisper + MIDI-Assisted Chord Inference + Stage 5 Adaptive Intra-Bar Segmentation")
-app.mount("/media", StaticFiles(directory=str(OUTPUTS_DIR)), name="media")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
@@ -71,6 +71,80 @@ def index(request: Request):
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/media/{job_id}/{filename:path}")
+def serve_media_file(job_id: str, filename: str, request: Request):
+    safe_job_id = Path(job_id).name
+    safe_filename = Path(filename).name
+    file_path = OUTPUTS_DIR / safe_job_id / safe_filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Media file not found")
+
+    suffix = file_path.suffix.lower()
+    media_types = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".mid": "audio/midi",
+        ".midi": "audio/midi",
+        ".json": "application/json",
+        ".txt": "text/plain; charset=utf-8",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    range_header = request.headers.get("range")
+    if suffix not in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"} or not range_header:
+        response = FileResponse(file_path, media_type=media_type)
+        response.headers["Accept-Ranges"] = "bytes"
+        return response
+
+    file_size = file_path.stat().st_size
+    try:
+        units, range_spec = range_header.strip().split("=", 1)
+        if units != "bytes":
+            raise ValueError("Unsupported range unit")
+        start_str, end_str = range_spec.split("-", 1)
+        if start_str == "":
+            suffix_length = int(end_str)
+            if suffix_length <= 0:
+                raise ValueError("Invalid suffix range")
+            start = max(file_size - suffix_length, 0)
+            end = file_size - 1
+        else:
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+    except Exception:
+        raise HTTPException(status_code=416, detail="Invalid range header")
+
+    if start < 0 or end < start or start >= file_size:
+        raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+
+    end = min(end, file_size - 1)
+    content_length = end - start + 1
+
+    def iter_file_chunks():
+        with open(file_path, "rb") as handle:
+            handle.seek(start)
+            remaining = content_length
+            chunk_size = 1024 * 1024
+            while remaining > 0:
+                data = handle.read(min(chunk_size, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Content-Length": str(content_length),
+        "Cache-Control": "no-cache",
+    }
+    return StreamingResponse(iter_file_chunks(), status_code=206, media_type=media_type, headers=headers)
 
 
 @app.post("/process")
@@ -122,6 +196,12 @@ async def process_audio(file: UploadFile = File(...)):
             debug_lines=debug_lines,
         )
 
+        vocals_preview_path = job_output_dir / "vocals_preview.mp3"
+        instrumental_preview_path = job_output_dir / "instrumental_preview.mp3"
+
+        create_preview_mp3(vocals_path, vocals_preview_path, debug_lines)
+        create_preview_mp3(instrumental_path, instrumental_preview_path, debug_lines)
+
         transcription = transcribe_vocals(vocals_path, debug_lines)
 
         chord_result: dict[str, Any]
@@ -148,8 +228,10 @@ async def process_audio(file: UploadFile = File(...)):
         payload = {
             "success": True,
             "job_id": job_id,
-            "vocals_url": f"/media/{job_id}/vocals.wav",
-            "instrumental_url": f"/media/{job_id}/instrumental.wav",
+            "vocals_url": f"/media/{job_id}/vocals_preview.mp3",
+            "instrumental_url": f"/media/{job_id}/instrumental_preview.mp3",
+            "vocals_wav_url": f"/media/{job_id}/vocals.wav",
+            "instrumental_wav_url": f"/media/{job_id}/instrumental.wav",
             "debug_url": f"/media/{job_id}/debug.txt",
             "lyrics": transcription["text"],
             "segments": transcription["segments"],
@@ -179,7 +261,6 @@ async def process_audio(file: UploadFile = File(...)):
         except Exception:
             pass
         return JSONResponse(err_payload, status_code=500)
-
 
 def convert_to_wav(
     input_path: Path,
@@ -217,6 +298,34 @@ def convert_to_wav(
             f"stderr:\n{result.stderr}"
         )
 
+def create_preview_mp3(input_path: Path, output_path: Path, debug_lines: list[str]) -> None:
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
+        str(output_path),
+    ]
+    debug_lines.append("preview_mp3_command=" + " ".join(cmd))
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    debug_lines.append(f"preview_mp3_returncode={result.returncode}")
+    if result.stdout:
+        debug_lines.append("preview_mp3_stdout=" + result.stdout[-4000:])
+    if result.stderr:
+        debug_lines.append("preview_mp3_stderr=" + result.stderr[-4000:])
+
+    if result.returncode != 0 or not output_path.exists():
+        raise RuntimeError(
+            "Preview MP3 conversion failed.\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
 
 def load_audio_for_demucs(wav_path: Path) -> tuple[np.ndarray, int]:
     audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
@@ -308,7 +417,7 @@ def build_lead_sheet(
     chord_timeline: list[dict[str, Any]],
 ) -> dict[str, Any]:
     if not lyric_segments:
-        return {"text": "", "blocks": []}
+        return {"text": "", "blocks": [], "chordpro": ""}
 
     usable_chords = [
         item for item in (chord_timeline or [])
@@ -414,6 +523,7 @@ def build_lead_sheet(
     return {
         "text": lead_sheet_text,
         "blocks": blocks,
+        "chordpro": build_chordpro(blocks),
     }
 
 
@@ -432,6 +542,21 @@ def render_chord_lyric_lines(pairs: list[dict[str, str]]) -> tuple[str, str]:
     chord_line = "  ".join(chord_parts).rstrip()
     lyric_line = "  ".join(lyric_parts).rstrip()
     return chord_line, lyric_line
+
+
+def build_chordpro(blocks: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for block in blocks:
+        pairs = block.get("pairs", []) or []
+        if not pairs:
+            continue
+        line = "".join(
+            f"[{(pair.get('chord') or 'N.C.').strip() or 'N.C.'}]{(pair.get('lyrics') or '').strip()}"
+            for pair in pairs
+        ).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def infer_chords_from_instrumental(
@@ -790,6 +915,54 @@ def split_segment_on_harmonic_change(
     return [part for part in parts if part["end"] - part["start"] >= MIN_SEGMENT_SECONDS * 0.75]
 
 
+def simplify_base_chord_symbol(symbol: str) -> str:
+    cleaned = (symbol or "").strip()
+    if not cleaned:
+        return "N.C."
+
+    cleaned = cleaned.split(",", 1)[0].strip()
+    cleaned = re.split(r"(?i)add", cleaned, maxsplit=1)[0].strip()
+    cleaned = cleaned.rstrip("-+/ ") if cleaned.endswith(("+", "/")) else cleaned.rstrip()
+
+    match = re.match(
+        r"^([A-G](?:#|b|-)?(?:maj13|maj11|maj9|maj7|maj6|min13|min11|min9|min7|min6|dim7|hdim7|dim|aug7|aug|sus4|sus2|sus|m13|m11|m9|m7|m6|m|7|9|11|13|6)?)",
+        cleaned,
+    )
+    if match:
+        return match.group(1)
+
+    fallback = re.match(r"^([A-G](?:#|b|-)?[A-Za-z0-9+#-]*)", cleaned)
+    if fallback:
+        return fallback.group(1)
+
+    return cleaned or "N.C."
+
+
+def simplify_chord_label(label: str) -> str:
+    cleaned = (label or "").strip()
+    if not cleaned or cleaned.upper() == "N.C.":
+        return "N.C."
+
+    primary = cleaned.split(",", 1)[0].strip()
+    if "/" in primary:
+        base, slash_part = primary.split("/", 1)
+        base = simplify_base_chord_symbol(base)
+        bass_match = re.match(r"^([A-G](?:#|b|-)?)", slash_part.strip())
+        if bass_match:
+            return f"{base}/{bass_match.group(1)}"
+        return base
+
+    return simplify_base_chord_symbol(primary)
+
+
+def normalize_display_chord_label(label: str) -> str:
+    normalized = (label or "").strip()
+    if not normalized:
+        return "N.C."
+    normalized = re.sub(r"([A-G])-", r"\1b", normalized)
+    return normalized
+
+
 def merge_adjacent_timeline_entries(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     for item in timeline:
@@ -936,8 +1109,11 @@ def describe_chord(pitches: list[int], m21chord: Any, harmony: Any) -> dict[str,
 
     long_name = getattr(chord_obj, "pitchedCommonName", None) or getattr(chord_obj, "commonName", None) or label
 
+    simplified_label = normalize_display_chord_label(simplify_chord_label(label))
+
     return {
-        "label": label,
+        "label": simplified_label,
+        "raw_label": label,
         "name": long_name,
         "pitch_classes": unique_pitch_classes,
         "pitches": sorted(pitches),
