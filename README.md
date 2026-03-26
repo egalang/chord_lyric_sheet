@@ -1,7 +1,6 @@
-
 # Demucs + Whisper Stage 6 Hybrid Chord MVP
 
-This package builds on the working Stage 5 MVP and adds a new Stage 6 harmonic engine focused on improving chord accuracy while preserving the current UI and workflow.
+This package builds on the working Stage 5 MVP and adds a Stage 6 harmonic engine focused on improving chord accuracy while preserving the current UI and workflow.
 
 ## Included pipeline
 
@@ -13,7 +12,7 @@ This package builds on the working Stage 5 MVP and adds a new Stage 6 harmonic e
 - Stage 6: chroma-based chord detection with confidence scoring and hybrid fusion
 - Lead Sheet MVP: chord-over-lyric output shown in the browser
 
-## What is new in Stage 6
+## What is new in this package
 
 - adds `app/chord/chroma_engine.py`
 - extracts chroma features directly from `instrumental.wav` with librosa
@@ -21,6 +20,8 @@ This package builds on the working Stage 5 MVP and adds a new Stage 6 harmonic e
 - keeps the existing MIDI/music21 result as fallback
 - fuses MIDI and chroma outputs conservatively
 - includes `confidence`, `source`, `midi_label`, and `chroma_label` in chord timeline entries
+- accepts either a local audio upload or a YouTube link as the input source
+- uses `yt-dlp` and `ffmpeg` to download and prepare YouTube audio before running the same pipeline
 
 ## Fusion behavior
 
@@ -43,6 +44,7 @@ http://localhost:8000
 
 ## Notes
 
-- UI remains the same so you can compare Stage 5 and Stage 6 without changing workflow.
+- The upload screen now supports either an uploaded audio file or a YouTube link.
+- For YouTube processing, the container must have outbound internet access and the video must be publicly accessible.
 - The package keeps MP3 previews and range-aware media streaming for browser seeking.
 - This is still a lead sheet MVP, not engraved staff notation yet.

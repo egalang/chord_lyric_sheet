@@ -49,20 +49,36 @@
           <div>
             <form id="uploadForm">
               <label for="audioFile">Audio file</label>
-              <input id="audioFile" name="file" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.mp4" required />
+              <input id="audioFile" name="file" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.mp4" />
+              <div class="or-divider">or</div>
+              <label for="youtubeUrl">YouTube link</label>
+              <input id="youtubeUrl" name="youtube_url" type="url" placeholder="https://www.youtube.com/watch?v=..." inputmode="url" />
+              <div class="small muted">Use either an uploaded audio file or a YouTube link for the same pipeline.</div>
               <div class="toolbar-row">
-                <button id="submitBtn" type="submit">Process audio</button>
+                <button id="submitBtn" type="submit">Process source</button>
               </div>
             </form>
             <div id="status" class="status">Ready.</div>
           </div>
           <div class="helper-card">
-            <h3>Best results</h3>
-            <ol>
-              <li>Use a clean song file with stable tempo and clear harmony.</li>
-              <li>Wait for stems, transcript, chord timeline, and lead sheet to finish loading.</li>
-              <li>Use the jump buttons to quickly audition tricky lyric or chord regions.</li>
-            </ol>
+            <div class="helper-card-header">
+              <h3 id="progressPanelTitle">Best results</h3>
+              <div id="progressMeta" class="small muted"></div>
+            </div>
+            <div id="tipsBlock">
+              <ol>
+                <li>Use a clean song file with stable tempo and clear harmony.</li>
+                <li>Wait for stems, transcript, chord timeline, and lead sheet to finish loading.</li>
+                <li>Use the jump buttons to quickly audition tricky lyric or chord regions.</li>
+              </ol>
+            </div>
+            <div id="progressWrap" class="progress-wrap hidden">
+              <div class="progress-bar-track">
+                <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
+              </div>
+              <div id="progressStage" class="progress-stage">Queued</div>
+              <div id="progressLog" class="progress-log"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -217,6 +233,7 @@
     const form = document.getElementById('uploadForm');
     const fileInput = document.getElementById('audioFile');
     const submitBtn = document.getElementById('submitBtn');
+    const youtubeUrlInput = document.getElementById('youtubeUrl');
     const statusEl = document.getElementById('status');
     const resultsEl = document.getElementById('results');
     const summaryPanel = document.getElementById('summaryPanel');
@@ -253,10 +270,19 @@
     const confidenceThresholdValue = document.getElementById('confidenceThresholdValue');
     const overrideThresholdValue = document.getElementById('overrideThresholdValue');
     const thresholdSaveStatus = document.getElementById('thresholdSaveStatus');
+    const progressPanelTitle = document.getElementById('progressPanelTitle');
+    const progressMeta = document.getElementById('progressMeta');
+    const tipsBlock = document.getElementById('tipsBlock');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = document.getElementById('progressBar');
+    const progressStage = document.getElementById('progressStage');
+    const progressLog = document.getElementById('progressLog');
     vocalsPlayer.preload = 'metadata';
     instrumentalPlayer.preload = 'metadata';
     let currentLeadSheetData = { text: '', blocks: [], chordpro: '' };
     let currentProcessData = null;
+    let currentEventSource = null;
+    let progressStartedAt = null;
     let analysisMode = false;
     let currentStage6Settings = { confidence_threshold: 0.78, override_threshold: 0.88 };
     let thresholdSaveTimer = null;
@@ -618,6 +644,63 @@
       }).join('\n');
     }
 
+    function showProgressPanel() {
+      if (tipsBlock) tipsBlock.classList.add('hidden');
+      if (progressWrap) progressWrap.classList.remove('hidden');
+      if (progressPanelTitle) progressPanelTitle.textContent = 'Processing progress';
+      if (progressMeta) progressMeta.textContent = 'Starting…';
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressStage) progressStage.textContent = 'Queued';
+      if (progressLog) progressLog.innerHTML = '';
+    }
+
+    function resetProgressPanel() {
+      if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+      }
+      progressStartedAt = Date.now();
+      showProgressPanel();
+    }
+
+    function appendProgressLog(item) {
+      if (!progressLog) return;
+      const row = document.createElement('div');
+      row.className = `progress-entry${item.status === 'failed' ? ' failed' : item.status === 'completed' ? ' completed' : ''}`;
+      const percentLabel = item.percent == null ? '' : `${Math.round(Number(item.percent))}%`;
+      row.innerHTML = `
+        <div class="progress-entry-message">${escapeHtml(item.message || 'Working...')}</div>
+        <div class="progress-entry-meta">${escapeHtml(item.stage || 'stage')}${percentLabel ? ' • ' + escapeHtml(percentLabel) : ''}${item.status ? ' • ' + escapeHtml(item.status) : ''}</div>
+      `;
+      progressLog.appendChild(row);
+      progressLog.scrollTop = progressLog.scrollHeight;
+      if (item.percent != null && progressBar) {
+        progressBar.style.width = `${Math.max(0, Math.min(100, Number(item.percent)))}%`;
+      }
+      if (progressStage) {
+        progressStage.textContent = item.message || 'Working...';
+      }
+      if (progressMeta && progressStartedAt) {
+        const seconds = Math.max(0, Math.round((Date.now() - progressStartedAt) / 1000));
+        progressMeta.textContent = `Elapsed ${seconds}s`;
+      }
+    }
+
+    async function pollResult(url) {
+      while (true) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (response.status === 202) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          continue;
+        }
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.error || payload.message || 'Processing failed.');
+        }
+        return payload;
+      }
+    }
+
     function updateSummary(data) {
       const meta = data.meta || {};
       const chords = data.chords || {};
@@ -650,30 +733,58 @@
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const file = fileInput.files[0];
-      if (!file) {
-        setStatus('Please choose an audio file first.', 'error');
+      const youtubeUrl = (youtubeUrlInput.value || '').trim();
+      if (!file && !youtubeUrl) {
+        setStatus('Please choose an audio file or paste a YouTube link first.', 'error');
+        return;
+      }
+      if (file && youtubeUrl) {
+        setStatus('Please use only one source at a time: uploaded file or YouTube link.', 'error');
         return;
       }
 
       resetUiForProcessing();
+      resetProgressPanel();
       submitBtn.disabled = true;
-      setStatus('Processing upload. First run may take longer while models download.');
+      setStatus(file ? 'Uploading audio and starting processing. First run may take longer while models download.' : 'Downloading audio from YouTube and starting processing. First run may take longer while models download.');
 
       try {
         const formData = new FormData();
-        formData.append('file', file);
+        if (file) {
+          formData.append('file', file);
+        }
+        if (youtubeUrl) {
+          formData.append('youtube_url', youtubeUrl);
+        }
 
-        const response = await fetch('/process', {
+        const startResponse = await fetch('/process/start', {
           method: 'POST',
           body: formData,
         });
-        const data = await response.json();
-        if (!response.ok) {
-          const detail = data.detail || data.error || data.message || 'Unknown error';
+        const startData = await startResponse.json();
+        if (!startResponse.ok) {
+          const detail = startData.detail || startData.error || startData.message || 'Unable to start processing.';
           throw new Error(detail);
         }
 
+        currentEventSource = new EventSource(startData.progress_url);
+        currentEventSource.onmessage = (streamEvent) => {
+          try {
+            const item = JSON.parse(streamEvent.data);
+            appendProgressLog(item);
+          } catch (_error) {}
+        };
+        currentEventSource.onerror = () => {
+          // Keep polling for the result even if the progress stream disconnects.
+        };
+
+        const data = await pollResult(startData.result_url);
         currentProcessData = data;
+
+        if (currentEventSource) {
+          currentEventSource.close();
+          currentEventSource = null;
+        }
 
         if (data.stage6_settings) {
           currentStage6Settings = {
@@ -693,7 +804,7 @@
         lyricsEl.value = data.lyrics || '';
 
         const meta = data.meta || {};
-        metaEl.textContent = `Whisper model: ${meta.whisper_model || 'unknown'} | Language: ${meta.language || 'unknown'} | Segments: ${meta.segment_count || 0}`;
+        metaEl.textContent = `Source: ${meta.source_type || 'upload'}${meta.youtube_url ? ' | YouTube: ' + meta.youtube_url : ''} | Whisper model: ${meta.whisper_model || 'unknown'} | Language: ${meta.language || 'unknown'} | Segments: ${meta.segment_count || 0}`;
 
         renderSegments(segmentsEl, data.segments, (seg) => {
           return `
@@ -733,10 +844,12 @@
         leadSheetPanel.classList.remove('hidden');
         debugPanel.classList.remove('hidden');
         setStatus('Processing complete. Review the stems, transcript, chord timeline, and lead sheet below.', 'ok');
+        appendProgressLog({ message: 'Processing finished.', stage: 'complete', status: 'completed', percent: 100 });
       } catch (error) {
         leadSheetBox.textContent = 'Lead sheet unavailable.';
         leadSheetBlocks.innerHTML = '<div class="lead-sheet-card"><div class="text">Lead sheet unavailable.</div></div>';
         setStatus(`Processing failed. ${error.message}`, 'error');
+        appendProgressLog({ message: error.message || 'Processing failed.', stage: 'error', status: 'failed', percent: 100 });
       } finally {
         submitBtn.disabled = false;
       }

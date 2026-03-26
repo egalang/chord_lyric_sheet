@@ -6,8 +6,12 @@ import statistics
 import subprocess
 import traceback
 import uuid
+import queue
+import threading
+import time
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 from typing import Any
 
 import numpy as np
@@ -16,7 +20,7 @@ import torch
 import whisper
 from demucs.apply import apply_model
 from demucs.pretrained import get_model
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -32,6 +36,10 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".mp4"}
 TARGET_SAMPLE_RATE = 44100
 TARGET_CHANNELS = 2
+
+YOUTUBE_URL_PATTERN = re.compile(r"^(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
+YTDLP_AUDIO_FORMAT = os.getenv("YTDLP_AUDIO_FORMAT", "bestaudio[ext=m4a]/bestaudio/best")
+
 CHORD_WINDOW_SECONDS = float(os.getenv("CHORD_WINDOW_SECONDS", "0.5"))
 MIN_ACTIVE_NOTES_FOR_CHORD = int(os.getenv("MIN_ACTIVE_NOTES_FOR_CHORD", "2"))
 MIN_NOTE_DURATION_SECONDS = float(os.getenv("MIN_NOTE_DURATION_SECONDS", "0.12"))
@@ -53,6 +61,68 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
 _DEMUCS_MODEL: Any = None
 _WHISPER_MODEL: Any = None
+
+JOB_STORE: dict[str, dict[str, Any]] = {}
+JOB_STORE_LOCK = threading.Lock()
+
+
+def create_job_state(job_id: str) -> dict[str, Any]:
+    state = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "history": [],
+        "queue": queue.Queue(),
+        "done": False,
+        "result": None,
+        "error": None,
+    }
+    with JOB_STORE_LOCK:
+        JOB_STORE[job_id] = state
+    return state
+
+
+def get_job_state(job_id: str) -> dict[str, Any] | None:
+    with JOB_STORE_LOCK:
+        return JOB_STORE.get(job_id)
+
+
+def publish_job_event(job_id: str, stage: str, message: str, percent: float | None = None, status: str = "running") -> None:
+    state = get_job_state(job_id)
+    if not state:
+        return
+    event = {
+        "seq": len(state["history"]) + 1,
+        "time": round(time.time(), 3),
+        "stage": stage,
+        "message": message,
+        "percent": percent,
+        "status": status,
+    }
+    state["history"].append(event)
+    state["queue"].put(event)
+
+
+def mark_job_complete(job_id: str, result: dict[str, Any]) -> None:
+    state = get_job_state(job_id)
+    if not state:
+        return
+    state["result"] = result
+    state["done"] = True
+    state["queue"].put(None)
+
+
+def mark_job_failed(job_id: str, error_payload: dict[str, Any]) -> None:
+    state = get_job_state(job_id)
+    if not state:
+        return
+    state["error"] = error_payload
+    state["done"] = True
+    state["queue"].put(None)
+
+
+def report_progress(progress_cb, stage: str, message: str, percent: float | None = None, status: str = "running") -> None:
+    if progress_cb:
+        progress_cb(stage=stage, message=message, percent=percent, status=status)
 
 
 def get_demucs_model() -> Any:
@@ -210,33 +280,114 @@ def serve_media_file(job_id: str, filename: str, request: Request):
     return StreamingResponse(iter_file_chunks(), status_code=206, media_type=media_type, headers=headers)
 
 
-@app.post("/process")
-async def process_audio(file: UploadFile = File(...)):
-    original_name = file.filename or "input_audio"
-    ext = Path(original_name).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+def is_supported_youtube_url(value: str) -> bool:
+    if not value:
+        return False
+    return bool(YOUTUBE_URL_PATTERN.match(value.strip()))
 
-    job_id = uuid.uuid4().hex[:12]
-    job_upload_dir = UPLOADS_DIR / job_id
-    job_output_dir = OUTPUTS_DIR / job_id
+
+def normalize_youtube_url(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if not re.match(r"^https?://", raw, flags=re.IGNORECASE):
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in {"youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
+        raise HTTPException(status_code=400, detail="Only YouTube links are supported.")
+
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/")
+    else:
+        query = parse_qs(parsed.query)
+        video_id = (query.get("v") or [""])[0]
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Unable to read the YouTube video ID from the link.")
+    return raw
+
+
+def download_youtube_audio(youtube_url: str, output_dir: Path, debug_lines: list[str]) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_template = output_dir / "youtube_source.%(ext)s"
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--extract-audio",
+        "--audio-format",
+        "wav",
+        "--audio-quality",
+        "0",
+        "--restrict-filenames",
+        "-f",
+        YTDLP_AUDIO_FORMAT,
+        "-o",
+        str(output_template),
+        youtube_url,
+    ]
+    debug_lines.append("youtube_url=" + youtube_url)
+    debug_lines.append("yt_dlp_command=" + " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    debug_lines.append(f"yt_dlp_returncode={result.returncode}")
+    if result.stdout:
+        debug_lines.append("yt_dlp_stdout=" + result.stdout[-4000:])
+    if result.stderr:
+        debug_lines.append("yt_dlp_stderr=" + result.stderr[-4000:])
+
+    candidates = sorted(output_dir.glob("youtube_source.*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for candidate in candidates:
+        if candidate.suffix.lower() in ALLOWED_EXTENSIONS or candidate.suffix.lower() == ".wav":
+            return candidate
+
+    raise RuntimeError(
+        "YouTube audio download failed.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+
+
+def run_pipeline(
+    *,
+    file_bytes: bytes | None,
+    original_name: str,
+    source_type: str,
+    normalized_youtube_url: str = "",
+    job_id: str | None = None,
+    progress_cb=None,
+) -> dict[str, Any]:
+    current_job_id = job_id or uuid.uuid4().hex[:12]
+    job_upload_dir = UPLOADS_DIR / current_job_id
+    job_output_dir = OUTPUTS_DIR / current_job_id
     job_upload_dir.mkdir(parents=True, exist_ok=True)
     job_output_dir.mkdir(parents=True, exist_ok=True)
 
+    ext = Path(original_name).suffix.lower() or ".wav"
     raw_upload_path = job_upload_dir / f"input_original{ext}"
     input_wav_path = job_upload_dir / "prepared_input.wav"
     debug_path = job_output_dir / "debug.txt"
 
+    debug_lines: list[str] = []
+    debug_lines.append(f"job_id={current_job_id}")
+    debug_lines.append(f"source_type={source_type}")
+    debug_lines.append(f"original_name={original_name}")
+
     try:
-        content = await file.read()
-        if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
-            raise HTTPException(status_code=400, detail=f"File exceeds {MAX_UPLOAD_MB} MB limit")
+        report_progress(progress_cb, "init", "Preparing job.", 2)
 
-        raw_upload_path.write_bytes(content)
+        if source_type == "upload":
+            file_size = len(file_bytes or b"")
+            if file_size > MAX_UPLOAD_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File exceeds {MAX_UPLOAD_MB} MB limit")
+            raw_upload_path.write_bytes(file_bytes or b"")
+            debug_lines.append(f"upload_size_bytes={file_size}")
+            report_progress(progress_cb, "upload", "Audio upload received.", 8)
+        else:
+            report_progress(progress_cb, "download", "Downloading audio from YouTube.", 8)
+            raw_upload_path = download_youtube_audio(normalized_youtube_url, job_upload_dir, debug_lines)
+            report_progress(progress_cb, "download", "YouTube audio downloaded.", 14)
 
-        debug_lines: list[str] = []
-        debug_lines.append(f"job_id={job_id}")
-        debug_lines.append(f"original_name={original_name}")
         debug_lines.append(f"raw_upload_path={raw_upload_path}")
         debug_lines.append(f"input_wav_path={input_wav_path}")
         debug_lines.append(f"chord_window_seconds={CHORD_WINDOW_SECONDS}")
@@ -248,6 +399,7 @@ async def process_audio(file: UploadFile = File(...)):
         debug_lines.append(f"stage6_chroma_override_threshold={RUNTIME_STAGE6_CHROMA_OVERRIDE_THRESHOLD}")
         debug_lines.append("adaptive_subdivision=enabled")
 
+        report_progress(progress_cb, "prepare", "Normalizing source audio with ffmpeg.", 18)
         convert_to_wav(
             input_path=raw_upload_path,
             output_path=input_wav_path,
@@ -256,6 +408,7 @@ async def process_audio(file: UploadFile = File(...)):
             debug_lines=debug_lines,
         )
 
+        report_progress(progress_cb, "stems", "Separating vocals and instrumental with Demucs.", 28)
         vocals_path, instrumental_path = separate_with_demucs(
             input_wav_path=input_wav_path,
             output_dir=job_output_dir,
@@ -265,14 +418,22 @@ async def process_audio(file: UploadFile = File(...)):
         vocals_preview_path = job_output_dir / "vocals_preview.mp3"
         instrumental_preview_path = job_output_dir / "instrumental_preview.mp3"
 
+        report_progress(progress_cb, "preview", "Creating preview MP3 files.", 42)
         create_preview_mp3(vocals_path, vocals_preview_path, debug_lines)
         create_preview_mp3(instrumental_path, instrumental_preview_path, debug_lines)
 
+        report_progress(progress_cb, "transcript", "Transcribing vocals with Whisper.", 52)
         transcription = transcribe_vocals(vocals_path, debug_lines)
 
+        report_progress(progress_cb, "chords", "Running chord extraction and Stage 6 fusion.", 66)
         chord_result: dict[str, Any]
         try:
-            chord_result = infer_chords_from_instrumental(instrumental_path, job_output_dir, debug_lines)
+            chord_result = infer_chords_from_instrumental(
+                instrumental_path,
+                job_output_dir,
+                debug_lines,
+                progress_cb=progress_cb,
+            )
         except Exception as chord_exc:
             debug_lines.append("stage3_error=" + str(chord_exc))
             debug_lines.append(traceback.format_exc())
@@ -286,6 +447,7 @@ async def process_audio(file: UploadFile = File(...)):
                 "meta": {},
             }
 
+        report_progress(progress_cb, "lead_sheet", "Building lead sheet output.", 92)
         lead_sheet = build_lead_sheet(
             lyric_segments=transcription["segments"],
             chord_timeline=chord_result.get("timeline", []),
@@ -293,12 +455,12 @@ async def process_audio(file: UploadFile = File(...)):
 
         payload = {
             "success": True,
-            "job_id": job_id,
-            "vocals_url": f"/media/{job_id}/vocals_preview.mp3",
-            "instrumental_url": f"/media/{job_id}/instrumental_preview.mp3",
-            "vocals_wav_url": f"/media/{job_id}/vocals.wav",
-            "instrumental_wav_url": f"/media/{job_id}/instrumental.wav",
-            "debug_url": f"/media/{job_id}/debug.txt",
+            "job_id": current_job_id,
+            "vocals_url": f"/media/{current_job_id}/vocals_preview.mp3",
+            "instrumental_url": f"/media/{current_job_id}/instrumental_preview.mp3",
+            "vocals_wav_url": f"/media/{current_job_id}/vocals.wav",
+            "instrumental_wav_url": f"/media/{current_job_id}/instrumental.wav",
+            "debug_url": f"/media/{current_job_id}/debug.txt",
             "lyrics": transcription["text"],
             "segments": transcription["segments"],
             "chords": chord_result,
@@ -307,26 +469,161 @@ async def process_audio(file: UploadFile = File(...)):
                 "whisper_model": transcription["model_name"],
                 "language": transcription.get("language"),
                 "segment_count": len(transcription["segments"]),
+                "source_type": source_type,
+                "youtube_url": normalized_youtube_url or None,
             },
         }
 
         debug_path.write_text("\n".join(debug_lines), encoding="utf-8")
-        return JSONResponse(payload)
+        report_progress(progress_cb, "complete", "Processing finished.", 100, status="completed")
+        return payload
 
     except HTTPException:
         raise
     except Exception as exc:
         tb = traceback.format_exc()
-        err_payload = {
-            "message": "Processing failed.",
-            "error": str(exc),
-            "traceback": tb,
-        }
         try:
             debug_path.write_text(tb, encoding="utf-8")
         except Exception:
             pass
-        return JSONResponse(err_payload, status_code=500)
+        report_progress(progress_cb, "error", f"Processing failed: {exc}", 100, status="failed")
+        raise
+
+
+def validate_process_request(file: UploadFile | None, youtube_url: str | None) -> tuple[UploadFile | None, str, str, str]:
+    normalized_youtube_url = ""
+    uploaded_file = file if file and (file.filename or "").strip() else None
+    youtube_value = (youtube_url or "").strip()
+
+    if uploaded_file is None and not youtube_value:
+        raise HTTPException(status_code=400, detail="Please upload an audio file or provide a YouTube link.")
+
+    if uploaded_file is not None and youtube_value:
+        raise HTTPException(status_code=400, detail="Please choose only one source: uploaded audio or YouTube link.")
+
+    if uploaded_file is not None:
+        original_name = uploaded_file.filename or "input_audio"
+        ext = Path(original_name).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+        source_type = "upload"
+    else:
+        normalized_youtube_url = normalize_youtube_url(youtube_value)
+        original_name = "youtube_audio.wav"
+        source_type = "youtube"
+
+    return uploaded_file, normalized_youtube_url, original_name, source_type
+
+
+@app.post("/process")
+async def process_audio(file: UploadFile | None = File(None), youtube_url: str | None = Form(None)):
+    uploaded_file, normalized_youtube_url, original_name, source_type = validate_process_request(file, youtube_url)
+    file_bytes = await uploaded_file.read() if uploaded_file is not None else None
+    payload = run_pipeline(
+        file_bytes=file_bytes,
+        original_name=original_name,
+        source_type=source_type,
+        normalized_youtube_url=normalized_youtube_url,
+    )
+    return JSONResponse(payload)
+
+
+@app.post("/process/start")
+async def start_process_audio(file: UploadFile | None = File(None), youtube_url: str | None = Form(None)):
+    uploaded_file, normalized_youtube_url, original_name, source_type = validate_process_request(file, youtube_url)
+    file_bytes = await uploaded_file.read() if uploaded_file is not None else None
+
+    job_id = uuid.uuid4().hex[:12]
+    create_job_state(job_id)
+    publish_job_event(job_id, "queued", "Job queued.", 0, status="queued")
+
+    def runner() -> None:
+        try:
+            result = run_pipeline(
+                file_bytes=file_bytes,
+                original_name=original_name,
+                source_type=source_type,
+                normalized_youtube_url=normalized_youtube_url,
+                job_id=job_id,
+                progress_cb=lambda **event: publish_job_event(job_id, **event),
+            )
+            mark_job_complete(job_id, result)
+        except HTTPException as exc:
+            error_payload = {"message": exc.detail, "status_code": exc.status_code}
+            publish_job_event(job_id, "error", str(exc.detail), 100, status="failed")
+            mark_job_failed(job_id, error_payload)
+        except Exception as exc:
+            error_payload = {
+                "message": "Processing failed.",
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+            publish_job_event(job_id, "error", f"Processing failed: {exc}", 100, status="failed")
+            mark_job_failed(job_id, error_payload)
+
+    threading.Thread(target=runner, daemon=True).start()
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "progress_url": f"/progress/{job_id}",
+        "result_url": f"/result/{job_id}",
+    }
+
+
+@app.get("/progress/{job_id}")
+def stream_progress(job_id: str):
+    state = get_job_state(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    def event_stream():
+        history = list(state["history"])
+        last_seq = 0
+        for item in history:
+            last_seq = max(last_seq, int(item.get("seq", 0)))
+            yield f"data: {json.dumps(item)}\n\n"
+
+        while True:
+            try:
+                item = state["queue"].get(timeout=10)
+            except queue.Empty:
+                yield ": keep-alive\n\n"
+                if state.get("done"):
+                    break
+                continue
+
+            if item is None:
+                if state.get("done"):
+                    break
+                continue
+
+            seq = int(item.get("seq", 0))
+            if seq <= last_seq:
+                continue
+            last_seq = seq
+            yield f"data: {json.dumps(item)}\n\n"
+            if state.get("done") and state["queue"].empty():
+                break
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/result/{job_id}")
+def get_job_result(job_id: str):
+    state = get_job_state(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if state.get("result") is not None:
+        return JSONResponse(state["result"])
+    if state.get("error") is not None:
+        return JSONResponse(state["error"], status_code=500)
+    return JSONResponse({"ok": False, "status": "processing"}, status_code=202)
+
 
 def convert_to_wav(
     input_path: Path,
@@ -629,6 +926,7 @@ def infer_chords_from_instrumental(
     instrumental_path: Path,
     output_dir: Path,
     debug_lines: list[str],
+    progress_cb=None,
 ) -> dict[str, Any]:
     from basic_pitch import ICASSP_2022_MODEL_PATH
     from basic_pitch.inference import predict
@@ -639,6 +937,7 @@ def infer_chords_from_instrumental(
 
     debug_lines.append("basic_pitch_model=" + str(ICASSP_2022_MODEL_PATH))
     debug_lines.append(f"basic_pitch_input={instrumental_path}")
+    report_progress(progress_cb, "chords", "Extracting MIDI note events with Basic Pitch.", 70)
 
     model_output, midi_data, note_events = predict(
         str(instrumental_path),
@@ -653,10 +952,12 @@ def infer_chords_from_instrumental(
 
     note_data = normalize_note_events(note_events)
     audio_duration = get_audio_duration_seconds(instrumental_path, note_data)
+    report_progress(progress_cb, "beats", "Tracking beats and downbeats with madmom.", 77)
     beat_grid = run_madmom_beat_tracking(instrumental_path, audio_duration, debug_lines)
     beat_grid_path.write_text(json.dumps(beat_grid, indent=2), encoding="utf-8")
     debug_lines.append(f"beat_grid_path={beat_grid_path}")
 
+    report_progress(progress_cb, "timeline", "Building adaptive chord timeline.", 84)
     timeline = build_chord_timeline_from_segments(
         note_data=note_data,
         beat_grid=beat_grid,
@@ -666,6 +967,7 @@ def infer_chords_from_instrumental(
 
     if STAGE6_CHROMA_ENABLED and timeline:
         try:
+            report_progress(progress_cb, "stage6", "Applying Stage 6 chroma fusion.", 88)
             timeline = apply_stage6_chroma_fusion(
                 instrumental_path=instrumental_path,
                 timeline=timeline,
@@ -676,6 +978,7 @@ def infer_chords_from_instrumental(
             debug_lines.append(traceback.format_exc())
 
     chord_json_path.write_text(json.dumps(timeline, indent=2), encoding="utf-8")
+    report_progress(progress_cb, "timeline", f"Chord timeline ready with {len(timeline)} segments.", 90)
     debug_lines.append(f"chord_timeline_entries={len(timeline)}")
     debug_lines.append(f"chord_json_path={chord_json_path}")
 
