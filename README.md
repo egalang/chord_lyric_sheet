@@ -1,6 +1,7 @@
-# Demucs + Whisper Stage 5 Lead Sheet MVP
 
-This package keeps the working Stage 5 pipeline and upgrades the web UI so the generated output is easier to review as a musician-facing MVP.
+# Demucs + Whisper Stage 6 Hybrid Chord MVP
+
+This package builds on the working Stage 5 MVP and adds a new Stage 6 harmonic engine focused on improving chord accuracy while preserving the current UI and workflow.
 
 ## Included pipeline
 
@@ -9,20 +10,24 @@ This package keeps the working Stage 5 pipeline and upgrades the web UI so the g
 - Stage 3: Basic Pitch MIDI extraction
 - Stage 4: madmom beat and downbeat tracking
 - Stage 5: adaptive intra-bar chord segmentation with music21 chord inference
+- Stage 6: chroma-based chord detection with confidence scoring and hybrid fusion
 - Lead Sheet MVP: chord-over-lyric output shown in the browser
 
-## UI upgrades in this package
+## What is new in Stage 6
 
-- refreshed landing section with clearer workflow guidance
-- processing summary cards for language, lyric count, chord count, and tempo
-- improved stem validation layout
-- cleaner transcript and chord timeline cards
-- jump buttons to audition lyric and chord entries in the correct audio player
-- upgraded lead sheet area with:
-  - plain text view
-  - structured line cards
-  - copy lead sheet button
-  - copy chord-lyric line format button
+- adds `app/chord/chroma_engine.py`
+- extracts chroma features directly from `instrumental.wav` with librosa
+- scores chord templates over each Stage 5 timeline segment
+- keeps the existing MIDI/music21 result as fallback
+- fuses MIDI and chroma outputs conservatively
+- includes `confidence`, `source`, `midi_label`, and `chroma_label` in chord timeline entries
+
+## Fusion behavior
+
+- if MIDI and chroma agree, the result is marked as `source: fused`
+- if MIDI is `N.C.` and chroma confidence is high, chroma can take over
+- if chroma confidence is very high, it can override the MIDI label
+- otherwise the Stage 5 MIDI result is preserved
 
 ## Run
 
@@ -38,6 +43,6 @@ http://localhost:8000
 
 ## Notes
 
-- The backend API shape is unchanged from the working lead sheet MVP package.
-- The UI reads the existing `lead_sheet.blocks` structure for the structured lead sheet view.
+- UI remains the same so you can compare Stage 5 and Stage 6 without changing workflow.
+- The package keeps MP3 previews and range-aware media streaming for browser seeking.
 - This is still a lead sheet MVP, not engraved staff notation yet.
