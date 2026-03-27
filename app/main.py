@@ -27,6 +27,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.chord.chroma_engine import infer_chroma_for_timeline
+from app.musicxml_export import build_measure_plan, write_musicxml
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("APP_DATA_DIR", BASE_DIR / "data"))
@@ -152,6 +153,11 @@ def get_stage6_runtime_settings() -> dict[str, float]:
 class Stage6SettingsUpdate(BaseModel):
     confidence_threshold: float | None = None
     override_threshold: float | None = None
+
+
+class MusicXMLExportRequest(BaseModel):
+    time_signature: str = "4/4"
+    title: str | None = None
 
 
 def clamp_stage6_threshold(value: float, fallback: float) -> float:
@@ -623,6 +629,78 @@ def get_job_result(job_id: str):
     if state.get("error") is not None:
         return JSONResponse(state["error"], status_code=500)
     return JSONResponse({"ok": False, "status": "processing"}, status_code=202)
+
+
+def normalize_time_signature(value: str | None) -> str:
+    raw = str(value or "4/4").strip() or "4/4"
+    match = re.fullmatch(r"(\d+)\s*/\s*(\d+)", raw)
+    if not match:
+        return "4/4"
+    beats = max(1, int(match.group(1)))
+    beat_type = int(match.group(2))
+    if beat_type not in {1, 2, 4, 8, 16, 32}:
+        beat_type = 4
+    return f"{beats}/{beat_type}"
+
+
+def load_job_beat_grid(job_id: str) -> dict[str, Any]:
+    beat_grid_path = OUTPUTS_DIR / Path(job_id).name / "beat_grid.json"
+    if not beat_grid_path.is_file():
+        return {}
+    try:
+        return json.loads(beat_grid_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def build_default_musicxml_title(result_payload: dict[str, Any], job_id: str) -> str:
+    meta = result_payload.get("meta") or {}
+    if meta.get("youtube_url"):
+        return "YouTube Lead Sheet"
+    return f"Lead Sheet {job_id}"
+
+
+@app.post("/export/musicxml/{job_id}")
+def export_musicxml(job_id: str, payload: MusicXMLExportRequest):
+    state = get_job_state(job_id)
+    if not state or state.get("result") is None:
+        raise HTTPException(status_code=404, detail="Completed job not found")
+
+    result_payload = state.get("result") or {}
+    chords = ((result_payload.get("chords") or {}).get("timeline")) or []
+    segments = result_payload.get("segments") or []
+    beat_grid = load_job_beat_grid(job_id)
+
+    time_signature = normalize_time_signature(payload.time_signature)
+    tempo_bpm = float((((result_payload.get("chords") or {}).get("meta") or {}).get("tempo_bpm")) or beat_grid.get("tempo_bpm") or 90.0)
+    title = (payload.title or "").strip() or build_default_musicxml_title(result_payload, job_id)
+
+    measures = build_measure_plan(
+        transcription_segments=segments,
+        chord_timeline=chords,
+        beat_grid=beat_grid,
+        time_signature=time_signature,
+        tempo_bpm=tempo_bpm,
+    )
+    if not measures:
+        raise HTTPException(status_code=400, detail="No data available to export MusicXML")
+
+    output_path = OUTPUTS_DIR / Path(job_id).name / "lead_sheet.musicxml"
+    write_musicxml(
+        output_path=output_path,
+        title=title,
+        measures=measures,
+        time_signature=time_signature,
+        tempo_bpm=tempo_bpm,
+    )
+
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "time_signature": time_signature,
+        "tempo_bpm": tempo_bpm,
+        "download_url": f"/media/{Path(job_id).name}/lead_sheet.musicxml",
+    }
 
 
 def convert_to_wav(

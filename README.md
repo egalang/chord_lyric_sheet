@@ -48,3 +48,8 @@ http://localhost:8000
 - For YouTube processing, the container must have outbound internet access and the video must be publicly accessible.
 - The package keeps MP3 previews and range-aware media streaming for browser seeking.
 - This is still a lead sheet MVP, not engraved staff notation yet.
+
+
+## MusicXML export
+
+This package now includes a downloadable MusicXML export from completed jobs. In the browser, choose a time signature (default `4/4`) and click **Download MusicXML** from the Lead sheet panel. The server generates `lead_sheet.musicxml` inside the job output folder and serves it back so it can be opened in MuseScore or other notation apps.

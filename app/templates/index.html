@@ -201,6 +201,17 @@
             <button id="copyLeadSheetBtn" type="button">Copy lead sheet</button>
             <button id="copyChordProBtn" type="button" class="button-secondary">Copy ChordPro</button>
             <button id="downloadChordProBtn" type="button" class="button-secondary">Download .pro</button>
+            <label class="time-signature-field" for="timeSignatureSelect">
+              <span>Time signature</span>
+              <select id="timeSignatureSelect">
+                <option value="4/4" selected>4/4</option>
+                <option value="3/4">3/4</option>
+                <option value="2/4">2/4</option>
+                <option value="6/8">6/8</option>
+                <option value="12/8">12/8</option>
+              </select>
+            </label>
+            <button id="downloadMusicXmlBtn" type="button" class="button-secondary">Download MusicXML</button>
           </div>
         </div>
         <div class="lead-sheet-layout">
@@ -260,6 +271,8 @@
     const copyLeadSheetBtn = document.getElementById('copyLeadSheetBtn');
     const copyChordProBtn = document.getElementById('copyChordProBtn');
     const downloadChordProBtn = document.getElementById('downloadChordProBtn');
+    const timeSignatureSelect = document.getElementById('timeSignatureSelect');
+    const downloadMusicXmlBtn = document.getElementById('downloadMusicXmlBtn');
     const summaryLanguage = document.getElementById('summaryLanguage');
     const summarySegments = document.getElementById('summarySegments');
     const summaryChords = document.getElementById('summaryChords');
@@ -286,6 +299,10 @@
     let analysisMode = false;
     let currentStage6Settings = { confidence_threshold: 0.78, override_threshold: 0.88 };
     let thresholdSaveTimer = null;
+
+    function getSelectedTimeSignature() {
+      return (timeSignatureSelect?.value || '4/4').trim() || '4/4';
+    }
 
     function setStatus(message, state = 'info') {
       statusEl.textContent = message;
@@ -892,6 +909,39 @@
       applyThresholdGuard('override');
       renderChordTimeline();
       scheduleStage6SettingsSave();
+    });
+
+    downloadMusicXmlBtn.addEventListener('click', async () => {
+      if (!currentProcessData?.job_id) {
+        setStatus('Run the pipeline first so there is a job to export.', 'error');
+        return;
+      }
+      const originalLabel = downloadMusicXmlBtn.textContent;
+      downloadMusicXmlBtn.disabled = true;
+      downloadMusicXmlBtn.textContent = 'Preparing MusicXML...';
+      try {
+        const response = await fetch(`/export/musicxml/${currentProcessData.job_id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ time_signature: getSelectedTimeSignature() }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || data.message || 'Unable to export MusicXML.');
+        }
+        const anchor = document.createElement('a');
+        anchor.href = data.download_url;
+        anchor.download = 'lead_sheet.musicxml';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setStatus(`MusicXML ready for download (${data.time_signature}).`, 'ok');
+      } catch (error) {
+        setStatus(`MusicXML export failed. ${error.message}`, 'error');
+      } finally {
+        downloadMusicXmlBtn.disabled = false;
+        downloadMusicXmlBtn.textContent = originalLabel;
+      }
     });
 
     downloadChordProBtn.addEventListener('click', () => {
