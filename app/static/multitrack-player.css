@@ -7,7 +7,6 @@
   overflow: hidden;
 }
 
-/* HEADER / TRANSPORT */
 .multitrack-toolbar {
   display: flex;
   align-items: center;
@@ -24,19 +23,17 @@
   min-width: 9rem;
 }
 
-/* BUTTONS */
 .multitrack-primary-button,
 .multitrack-track-button {
   border: 0;
   border-radius: 999px;
-  padding: 0.6rem 1rem;
-  font-weight: 700;
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
-/* PLAY BUTTON (use primary color) */
 .multitrack-primary-button {
+  padding: 0.6rem 1rem;
+  font-weight: 700;
   background: var(--primary);
   color: #fff;
 }
@@ -45,29 +42,42 @@
   background: var(--primary-2);
 }
 
-/* TRACK BUTTON (mute) */
 .multitrack-track-button {
-  background: #e8eefc;
-  color: var(--primary-2);
+  width: 2.5rem;
+  height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  background: color-mix(in srgb, var(--track-color, var(--primary)) 12%, #ffffff);
+  color: var(--track-color, var(--primary-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--track-color, var(--primary)) 28%, transparent);
 }
 
 .multitrack-track-button:hover {
-  background: #dce7ff;
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--track-color, var(--primary)) 18%, #ffffff);
 }
 
-/* MUTED STATE */
 .multitrack-track-button.is-muted {
   background: #fef2f2;
   color: var(--error-text);
+  box-shadow: inset 0 0 0 1px rgba(180, 35, 24, 0.16);
 }
 
-/* SEEK BAR */
+.multitrack-track-button:focus-visible,
+.multitrack-primary-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .multitrack-seek {
   flex: 1 1 auto;
   accent-color: var(--primary);
 }
 
-/* TIME DISPLAY */
 .multitrack-time {
   min-width: 7rem;
   text-align: right;
@@ -75,14 +85,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* BODY */
 .multitrack-body {
   padding: 1rem;
   display: grid;
   gap: 0.8rem;
 }
 
-/* EMPTY STATE */
 .multitrack-empty {
   padding: 1rem;
   border: 1px dashed var(--border);
@@ -91,22 +99,40 @@
   background: var(--surface-2);
 }
 
-/* TRACK ROW */
 .multitrack-row {
+  --track-color: var(--primary);
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(0, 1fr);
   gap: 1rem;
   align-items: center;
   padding: 10px;
   border-radius: 14px;
   background: linear-gradient(180deg, #ffffff, #f8fbff);
   border: 1px solid var(--border);
+  border-left: 4px solid var(--track-color);
 }
 
-/* LEFT SIDE (LABEL + BUTTONS) */
 .multitrack-row-meta {
   display: grid;
   gap: 0.65rem;
+}
+
+.multitrack-track-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.multitrack-track-icon {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 1rem;
+  background: color-mix(in srgb, var(--track-color) 12%, white);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--track-color) 20%, transparent);
 }
 
 .multitrack-track-label {
@@ -115,7 +141,12 @@
   font-weight: 800;
 }
 
-/* WAVEFORM */
+.multitrack-track-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .multitrack-wave-lane {
   border-radius: 14px;
   overflow: hidden;
@@ -129,7 +160,6 @@
   display: block;
 }
 
-/* RESPONSIVE */
 @media (max-width: 900px) {
   .multitrack-toolbar {
     flex-wrap: wrap;
