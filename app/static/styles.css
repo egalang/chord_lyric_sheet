@@ -694,3 +694,7 @@ input[type="url"], input[type="text"] { display: block; width: 100%; margin-bott
 .time-signature-field option {
   color: #0f172a;
 }
+
+
+/* Multitrack player patch */
+.multitrack-shell { margin-top: 18px; }

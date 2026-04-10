@@ -1,0 +1,141 @@
+.multitrack-shell {
+  margin-top: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* HEADER / TRANSPORT */
+.multitrack-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.multitrack-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+  min-width: 9rem;
+}
+
+/* BUTTONS */
+.multitrack-primary-button,
+.multitrack-track-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.6rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+/* PLAY BUTTON (use primary color) */
+.multitrack-primary-button {
+  background: var(--primary);
+  color: #fff;
+}
+
+.multitrack-primary-button:hover {
+  background: var(--primary-2);
+}
+
+/* TRACK BUTTON (mute) */
+.multitrack-track-button {
+  background: #e8eefc;
+  color: var(--primary-2);
+}
+
+.multitrack-track-button:hover {
+  background: #dce7ff;
+}
+
+/* MUTED STATE */
+.multitrack-track-button.is-muted {
+  background: #fef2f2;
+  color: var(--error-text);
+}
+
+/* SEEK BAR */
+.multitrack-seek {
+  flex: 1 1 auto;
+  accent-color: var(--primary);
+}
+
+/* TIME DISPLAY */
+.multitrack-time {
+  min-width: 7rem;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* BODY */
+.multitrack-body {
+  padding: 1rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+/* EMPTY STATE */
+.multitrack-empty {
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+/* TRACK ROW */
+.multitrack-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 10px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  border: 1px solid var(--border);
+}
+
+/* LEFT SIDE (LABEL + BUTTONS) */
+.multitrack-row-meta {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.multitrack-track-label {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+/* WAVEFORM */
+.multitrack-wave-lane {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #d8e0ee;
+  background: #f9fbff;
+}
+
+.multitrack-wave-canvas {
+  width: 100%;
+  height: 84px;
+  display: block;
+}
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .multitrack-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .multitrack-row {
+    grid-template-columns: 1fr;
+  }
+}

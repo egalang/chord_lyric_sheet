@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chord + Lyrics Sheet Creator</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/multitrack-player.css" />
 </head>
 <body>
   <main class="container">
@@ -133,6 +134,18 @@
             <p><a id="instrumentalLink" href="#" target="_blank" rel="noopener">Open instrumental.wav</a></p>
           </div>
         </div>
+        <section class="multitrack-shell" aria-labelledby="multitrack-title" data-multitrack-player>
+          <div class="multitrack-toolbar">
+            <div class="multitrack-title" id="multitrack-title">Stem Mixer</div>
+            <button type="button" class="multitrack-primary-button" data-multitrack-play>Play</button>
+            <input type="range" class="multitrack-seek" min="0" max="1000" value="0" data-multitrack-seek />
+            <div class="multitrack-time" data-multitrack-time>0:00 / 0:00</div>
+          </div>
+          <div class="multitrack-body">
+            <div class="multitrack-empty" data-multitrack-empty>Process a song to load multitrack stems.</div>
+            <div data-multitrack-tracks></div>
+          </div>
+        </section>
       </section>
 
       <div class="results-grid">
@@ -718,6 +731,16 @@
       }
     }
 
+    async function mountStemMixerFromResult(data) {
+      if (!window.loadMultitrackIntoPage) return;
+      const manifestUrl = data?.stem_manifest_url || null;
+      try {
+        await window.loadMultitrackIntoPage(manifestUrl);
+      } catch (error) {
+        console.error('Stem mixer failed to load', error);
+      }
+    }
+
     function updateSummary(data) {
       const meta = data.meta || {};
       const chords = data.chords || {};
@@ -745,6 +768,11 @@
       chordMetaEl.textContent = '';
       leadSheetBox.textContent = 'Processing...';
       setChordStatus('Waiting for results.');
+      if (window.__stemSyncPlayer) {
+        window.__stemSyncPlayer.stop(true);
+        window.__stemSyncPlayer.clearTracks();
+        window.__stemSyncPlayer.showEmpty('Process a song to load multitrack stems.');
+      }
     }
 
     form.addEventListener('submit', async (event) => {
@@ -817,6 +845,7 @@
         instrumentalPlayer.src = data.instrumental_url;
         vocalsLink.href = data.vocals_url;
         instrumentalLink.href = data.instrumental_url;
+        await mountStemMixerFromResult(data);
         debugLink.href = data.debug_url;
         lyricsEl.value = data.lyrics || '';
 
@@ -961,5 +990,6 @@
     loadStage6Settings();
     toggleAnalysisMode(false);
   </script>
+  <script src="/static/multitrack-player.js"></script>
 </body>
 </html>

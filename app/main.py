@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from app.chord.chroma_engine import infer_chroma_for_timeline
 from app.musicxml_export import build_measure_plan, write_musicxml
+from app.stem_support import load_stem_manifest, prepare_multitrack_stems
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("APP_DATA_DIR", BASE_DIR / "data"))
@@ -212,11 +213,45 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/jobs/{job_id}/stems")
+def get_job_stems(job_id: str):
+    job_dir = OUTPUTS_DIR / Path(job_id).name
+    manifest = load_stem_manifest(job_dir)
+    if manifest:
+        return JSONResponse(content=manifest)
+
+    fallback_stems = []
+    vocals_path = job_dir / "vocals.wav"
+    instrumental_path = job_dir / "instrumental.wav"
+    if vocals_path.is_file():
+        fallback_stems.append({"id": "vocals", "label": "Vocals", "url": f"/media/{Path(job_id).name}/vocals.wav"})
+    if instrumental_path.is_file():
+        fallback_stems.append({"id": "instrumental", "label": "Instrumental", "url": f"/media/{Path(job_id).name}/instrumental.wav"})
+
+    if not fallback_stems:
+        raise HTTPException(status_code=404, detail="Stem manifest not found")
+
+    return JSONResponse(content={
+        "job_id": Path(job_id).name,
+        "stems": fallback_stems,
+        "instrumental_url": f"/media/{Path(job_id).name}/instrumental.wav",
+        "vocals_url": f"/media/{Path(job_id).name}/vocals.wav",
+        "manifest_url": f"/api/jobs/{Path(job_id).name}/stems",
+    })
+
+
 @app.get("/media/{job_id}/{filename:path}")
 def serve_media_file(job_id: str, filename: str, request: Request):
     safe_job_id = Path(job_id).name
-    safe_filename = Path(filename).name
-    file_path = OUTPUTS_DIR / safe_job_id / safe_filename
+    relative_path = Path(filename)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise HTTPException(status_code=400, detail="Invalid media path")
+    file_path = (OUTPUTS_DIR / safe_job_id / relative_path).resolve()
+    job_root = (OUTPUTS_DIR / safe_job_id).resolve()
+    try:
+        file_path.relative_to(job_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid media path")
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Media file not found")
 
@@ -414,8 +449,8 @@ def run_pipeline(
             debug_lines=debug_lines,
         )
 
-        report_progress(progress_cb, "stems", "Separating vocals and instrumental with Demucs.", 28)
-        vocals_path, instrumental_path = separate_with_demucs(
+        report_progress(progress_cb, "stems", "Separating vocals and instrument stems with Demucs.", 28)
+        vocals_path, instrumental_path, stem_manifest = separate_with_demucs(
             input_wav_path=input_wav_path,
             output_dir=job_output_dir,
             debug_lines=debug_lines,
@@ -466,6 +501,8 @@ def run_pipeline(
             "instrumental_url": f"/media/{current_job_id}/instrumental_preview.mp3",
             "vocals_wav_url": f"/media/{current_job_id}/vocals.wav",
             "instrumental_wav_url": f"/media/{current_job_id}/instrumental.wav",
+            "stems": stem_manifest.get("stems", []),
+            "stem_manifest_url": f"/api/jobs/{current_job_id}/stems",
             "debug_url": f"/media/{current_job_id}/debug.txt",
             "lyrics": transcription["text"],
             "segments": transcription["segments"],
@@ -786,7 +823,7 @@ def write_audio(path: Path, audio: np.ndarray, sr: int) -> None:
     sf.write(str(path), audio, sr)
 
 
-def separate_with_demucs(input_wav_path: Path, output_dir: Path, debug_lines: list[str]) -> tuple[Path, Path]:
+def separate_with_demucs(input_wav_path: Path, output_dir: Path, debug_lines: list[str]) -> tuple[Path, Path, dict[str, Any]]:
     model = get_demucs_model()
     waveform, sr = load_audio_for_demucs(input_wav_path)
 
@@ -802,28 +839,32 @@ def separate_with_demucs(input_wav_path: Path, output_dir: Path, debug_lines: li
     if "vocals" not in source_names:
         raise RuntimeError("Demucs model sources do not include vocals")
 
+    stems_output_dir = output_dir / "demucs_raw"
+    stems_output_dir.mkdir(parents=True, exist_ok=True)
+
     source_map = {name: sources[idx].detach().cpu().numpy() for idx, name in enumerate(source_names)}
-    vocals = np.asarray(source_map["vocals"], dtype=np.float32)
+    for name, stem_audio in source_map.items():
+        stem_path = stems_output_dir / f"{name}.wav"
+        write_audio(stem_path, np.asarray(stem_audio, dtype=np.float32), sr)
+        debug_lines.append(f"demucs_stem_{name}={stem_path}")
 
-    accompaniment_parts = [
-        np.asarray(stem, dtype=np.float32)
-        for name, stem in source_map.items()
-        if name != "vocals"
-    ]
-    if not accompaniment_parts:
-        raise RuntimeError("Demucs output is missing accompaniment stems")
-
-    instrumental = np.sum(accompaniment_parts, axis=0, dtype=np.float32)
+    stem_manifest = prepare_multitrack_stems(
+        job_dir=output_dir,
+        demucs_output_root=stems_output_dir,
+        job_id=output_dir.name,
+    )
 
     vocals_path = output_dir / "vocals.wav"
     instrumental_path = output_dir / "instrumental.wav"
 
-    write_audio(vocals_path, vocals, sr)
-    write_audio(instrumental_path, instrumental, sr)
+    if not vocals_path.exists() or not instrumental_path.exists():
+        raise RuntimeError("Expected vocals.wav and instrumental.wav were not generated from stems")
 
     debug_lines.append(f"vocals_path={vocals_path}")
     debug_lines.append(f"instrumental_path={instrumental_path}")
-    return vocals_path, instrumental_path
+    debug_lines.append(f"stem_manifest_path={output_dir / 'stems' / 'stem_manifest.json'}")
+    debug_lines.append(f"stem_count={len(stem_manifest.get('stems', []))}")
+    return vocals_path, instrumental_path, stem_manifest
 
 
 def transcribe_vocals(vocals_path: Path, debug_lines: list[str]) -> dict[str, Any]:
